@@ -23,6 +23,11 @@ st.markdown("""
         padding: 15px;
         border-radius: 12px;
     }
+    .proj-text {
+        font-size: 24px;
+        font-weight: bold;
+        text-shadow: 0 0 10px rgba(0,255,65,0.3);
+    }
     div[data-testid="stTextInput"] > div > div > input {
         border: 1px solid #00FF41 !important;
         background-color: #161b22 !important;
@@ -47,7 +52,7 @@ st.sidebar.title("💠 SENTINEL")
 TICKER = st.sidebar.text_input("SEARCH", st.session_state.get('current_ticker', 'NVDA')).upper()
 st.session_state.current_ticker = TICKER
 
-# Order: 1D to 5Y, with YTD last
+# Corrected Timeframe Order
 time_map = {"1D": "1d", "5D": "5d", "1M": "1mo", "1Y": "1y", "5Y": "5y", "YTD": "ytd"}
 selected_label = st.sidebar.selectbox("TIMEFRAME", list(time_map.keys()), index=3)
 
@@ -68,21 +73,24 @@ for fav in st.session_state.favorites:
 
 # --- 6. MAIN CONTENT ---
 try:
-    # Use session to mimic browser for News stability
     ticker_obj = yf.Ticker(TICKER)
     df = yf.download(TICKER, period=time_map[selected_label], 
                      interval="1m" if selected_label=="1D" else "1d", 
-                     progress=False, group_by='column')
+                     progress=False)
     
     if not df.empty:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         
+        # Download button: Sidebar & Conditional (Only shows if fetch works)
+        st.sidebar.markdown("---")
+        st.sidebar.download_button("📥 DOWNLOAD CSV", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
+        
         info = ticker_obj.info
         curr_p = float(df['Close'].iloc[-1])
         diff = curr_p - float(df['Close'].iloc[0])
         
-        # Header
+        # Header + Star Toggle
         c_title, c_star = st.columns([0.9, 0.1])
         c_title.title(f"{info.get('longName', TICKER)} ({TICKER})")
         
@@ -92,68 +100,53 @@ try:
             else: st.session_state.favorites.append(TICKER)
             st.rerun()
 
-        # AI Projection Math
+        # AI Projection extension
         y_vals = df['Close'].values.flatten()
         x_vals = np.arange(len(y_vals))
         slope, intercept = np.polyfit(x_vals, y_vals, 1)
         
-        # Create "Future" index for the prediction line
-        future_steps = int(len(x_vals) * 0.15) # Extend by 15%
-        x_future = np.arange(len(y_vals), len(y_vals) + future_steps)
+        future_steps = int(len(x_vals) * 0.15) 
+        x_future = np.arange(len(x_vals), len(x_vals) + future_steps)
         y_future = slope * x_future + intercept
         
-        # Latest Prediction point
-        final_pred = y_future[-1]
-        st.markdown(f"### 🔮 AI PROJECTION: <span style='color:#00FF41;'>${final_pred:.2f}</span>", unsafe_allow_html=True)
+        st.markdown(f"<div class='proj-text'>🔮 AI PROJECTION: <span style='color:#00FF41;'>${y_future[-1]:.2f}</span></div>", unsafe_allow_html=True)
 
         # 2x2 Metric Grid
         m1, m2 = st.columns(2); m3, m4 = st.columns(2)
         m1.metric("Market Price", f"${curr_p:.2f}")
         
-        # Velocity Color Logic
+        # Trend Velocity Color Logic
         vel_color = "normal" if slope >= 0 else "inverse"
         m2.metric("Trend Velocity", f"{slope:+.4f}", delta=f"{slope:.4f}", delta_color=vel_color)
         
         m3.metric("Market Cap", format_val(info.get('marketCap')))
         m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
 
-        # Graph with Extended Prediction Line
+        # Graph with Future Path
         l_col = "#00FF41" if diff >= 0 else "#FF3131"
         fig = go.Figure()
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', name="Price", 
+                                 line=dict(color=l_col, width=3), fillcolor=f"rgba(0, 255, 65, 0.1)"))
         
-        # Current Price Area
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', name="Actual", 
-                                 line=dict(color=l_col, width=3), fillcolor=f"rgba{tuple(list(int(l_col.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + [0.1])}"))
-        
-        # The AI "Future" Line
-        # Calculate future timestamps
         last_date = df.index[-1]
         future_dates = [last_date + timedelta(days=i) for i in range(1, future_steps + 1)]
-        
-        fig.add_trace(go.Scatter(x=future_dates, y=y_future, name="AI Prediction", 
+        fig.add_trace(go.Scatter(x=future_dates, y=y_future, name="AI Projection", 
                                  line=dict(color="#00FF41", width=2, dash='dot')))
         
-        fig.update_layout(template="plotly_dark", height=450, dragmode='pan', margin=dict(l=0, r=0, t=10, b=0), showlegend=False,
-                          xaxis=dict(showgrid=False), yaxis=dict(side="right", gridcolor="rgba(255,255,255,0.05)"))
+        fig.update_layout(template="plotly_dark", height=450, dragmode='pan', margin=dict(l=0, r=0, t=10, b=0), showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
-        # Download CSV
-        st.sidebar.markdown("---")
-        st.sidebar.download_button("📥 DOWNLOAD CSV", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
-
-        # News Section (Enhanced Stability)
+        # News Section (Bypassing blocks)
         st.subheader("📰 Recent Headlines")
         try:
-            news_list = ticker_obj.news
-            if news_list:
-                for n in news_list[:5]:
+            news = ticker_obj.news
+            if news:
+                for n in news[:5]:
                     with st.expander(n.get('title', 'Market Update')):
-                        st.write(f"**Source:** {n.get('publisher', 'Financial News')}")
-                        if n.get('link'): st.markdown(f"[Read Full Article]({n['link']})")
-            else:
-                st.info("No recent news headlines available for this ticker.")
-        except:
-            st.error("News feed currently unavailable due to API limits.")
+                        st.write(f"Source: {n.get('publisher', 'Financial News')}")
+                        st.markdown(f"[Read Full Article]({n['link']})")
+            else: st.info("News feed is currently limited by Yahoo Finance.")
+        except: st.info("News feed is currently unavailable.")
 
-except Exception as e:
-    st.error(f"Error fetching {TICKER}. Yahoo Finance may be experiencing issues.")
+except Exception:
+    st.error(f"Error fetching {TICKER}. Please check the ticker symbol or wait 15 minutes.")
