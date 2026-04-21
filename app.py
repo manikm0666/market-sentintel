@@ -6,37 +6,26 @@ from streamlit_autorefresh import st_autorefresh
 import numpy as np
 
 # --- 1. APP CONFIG ---
-# Reverted to 'expanded' to keep your Watchlist visible
 st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="expanded")
 st_autorefresh(interval=60 * 1000, key="sentinel_refresh")
 
 # --- 2. FULL LEGAL WARNING ---
 st.warning("⚠️ **FINANCIAL DISCLAIMER**: The data and 'predictions' shown here are for educational purposes only. This AI does not provide financial advice. Trading involves significant risk of loss. Always consult a certified professional before making investment decisions.")
 
-# --- 3. UI STYLING (Restored Customizations) ---
+# --- 3. UI STYLING ---
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: #FFFFFF; }
-    
-    /* 2x2 Metric Cards restored */
     div[data-testid="stMetric"] {
         background-color: rgba(255,255,255,0.03);
         border: 1px solid rgba(128,128,128,0.1);
         padding: 15px;
         border-radius: 12px;
     }
-
-    /* Mobile: 2x2 Grid + Small Star Fix */
     @media (max-width: 640px) {
         div[data-testid="column"] { width: 100% !important; flex: 1 1 calc(50% - 10px) !important; }
-        div[data-testid="column"]:nth-child(2) button {
-            font-size: 12px !important;
-            padding: 2px 5px !important;
-            min-height: 28px !important;
-        }
+        div[data-testid="column"]:nth-child(2) button { font-size: 12px !important; min-height: 28px !important; }
     }
-
-    /* Neon Search Input */
     div[data-testid="stTextInput"] > div > div > input {
         border: 1px solid #00FF41 !important;
         background-color: #161b22 !important;
@@ -56,7 +45,7 @@ def format_val(num):
         return f"{num:.1f}P"
     except: return "N/A"
 
-# --- 5. SIDEBAR (Full Watchlist/Favorites Restored) ---
+# --- 5. SIDEBAR (Watchlist & Trashcan) ---
 st.sidebar.title("💠 SENTINEL")
 TICKER = st.sidebar.text_input("SEARCH", st.session_state.get('current_ticker', 'NVDA')).upper()
 st.session_state.current_ticker = TICKER
@@ -65,33 +54,37 @@ time_map = {"1D": "1d", "5D": "5d", "1M": "1mo", "YTD": "ytd", "1Y": "1y", "5Y":
 selected_label = st.sidebar.selectbox("TIMEFRAME", list(time_map.keys()), index=4)
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("📂 WATCHLIST")
+col_w, col_del = st.sidebar.columns([0.8, 0.2])
+col_w.subheader("📂 WATCHLIST")
+if col_del.button("🗑️", help="Clear all favorites"):
+    st.session_state.favorites = []
+    st.rerun()
+
 if 'favorites' not in st.session_state:
     st.session_state.favorites = ["AAPL", "MSFT", "NVDA", "^GSPC"]
 
-# Favorites clickable list
+# Restored Stars in Watchlist
 for fav in st.session_state.favorites:
-    if st.sidebar.button(f" {fav}", key=f"side_{fav}", use_container_width=True):
+    if st.sidebar.button(f"★ {fav}", key=f"side_{fav}", use_container_width=True):
         st.session_state.current_ticker = fav
         st.rerun()
 
 # --- 6. MAIN CONTENT ---
 try:
     ticker_obj = yf.Ticker(TICKER)
-    # Using download for stability with group_by to flatten headers
+    # Fetch with group_by for MultiIndex stability
     df = yf.download(TICKER, period=time_map[selected_label], 
                      interval="1m" if selected_label=="1D" else "1d", 
                      progress=False, group_by='column')
     
     if not df.empty:
-        # CLEANUP: Crucial fix for MultiIndex headers that cause blank screens
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = df.columns.get_level_values(0)
         
         curr_p = float(df['Close'].iloc[-1])
         diff = curr_p - float(df['Close'].iloc[0])
         
-        # Header + Favorite Star Toggle
+        # Header + Star
         c_title, c_star = st.columns([0.9, 0.1])
         c_title.title(f"{TICKER} Asset Monitor")
         
@@ -101,42 +94,41 @@ try:
             else: st.session_state.favorites.append(TICKER)
             st.rerun()
 
-        # AI Projection with Help Tooltip
+        # AI Projection
         y_vals = df['Close'].values.flatten()
         slope, _ = np.polyfit(np.arange(len(y_vals)), y_vals, 1)
         pred = slope * (len(y_vals)) + float(df['Close'].iloc[0])
         st.markdown(f"### 🔮 AI PROJECTION: <span style='color:#00FF41;'>${pred:.2f}</span>", 
-                    help="Linear regression trend calculation based on current timeframe.", unsafe_allow_html=True)
+                    help="Linear regression estimate.", unsafe_allow_html=True)
 
-        # 2x2 Metric Grid
+        # 2x2 Grid
         m1, m2 = st.columns(2)
         m3, m4 = st.columns(2)
-        
-        # Fetching info safely to avoid rate-limiting crashes
         info = ticker_obj.info
-        m1.metric("Market Price", f"${curr_p:.2f}", help="Last traded price.")
-        m2.metric("Trend Velocity", f"{slope:+.4f}", help="Average growth per interval.")
+        m1.metric("Market Price", f"${curr_p:.2f}", help="Last trade price.")
+        m2.metric("Trend Velocity", f"{slope:+.4f}", help="Average growth rate.")
         m3.metric("Market Cap", format_val(info.get('marketCap')), help="Total company value.")
-        m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}", help="Price-to-Earnings.")
+        m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}", help="Price relative to earnings.")
 
-        # Graph Settings
+        # Graph
         l_col = "#00FF41" if diff >= 0 else "#FF3131"
         f_col = "rgba(0, 255, 65, 0.12)" if diff >= 0 else "rgba(255, 49, 49, 0.12)"
-        
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', 
-                                 line=dict(color=l_col, width=3), fillcolor=f_col))
-        
+        fig = go.Figure(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', 
+                                    line=dict(color=l_col, width=3), fillcolor=f_col))
         fig.update_layout(template="plotly_dark", height=450, dragmode='pan', margin=dict(l=0, r=0, t=10, b=0),
                           xaxis=dict(showgrid=False), yaxis=dict(side="right", gridcolor="rgba(255,255,255,0.05)"))
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # News Section
+        # Restored Export CSV
+        st.sidebar.markdown("---")
+        st.sidebar.download_button("📥 DOWNLOAD DATA", df.to_csv().encode('utf-8'), f"{TICKER}_data.csv", use_container_width=True)
+
+        # News
         st.subheader("📰 Recent Headlines")
         for n in ticker_obj.news[:4]:
             with st.expander(n.get('title', 'Market Update')):
                 if n.get('link'): st.markdown(f"**[Read Full Article]({n['link']})**")
 
-except Exception as e:
+except Exception:
     st.error(f"Error fetching {TICKER}. Data source may be temporarily unavailable.")
-    st.info("Try refreshing or searching for a different ticker.")
+    st.info("Yahoo Finance often limits requests if searched too quickly. Try again in 15 minutes.")
