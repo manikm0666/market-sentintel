@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 import numpy as np
+from datetime import timedelta
 
 # --- 1. APP CONFIG ---
 st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="expanded")
@@ -27,8 +28,6 @@ st.markdown("""
         background-color: #161b22 !important;
         color: #00FF41 !important;
     }
-    /* Metric Color Logic */
-    [data-testid="stMetricValue"] { font-weight: 700; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -43,12 +42,12 @@ def format_val(num):
         return f"{num:.1f}P"
     except: return "N/A"
 
-# --- 5. SIDEBAR (Timeframe Order Fixed) ---
+# --- 5. SIDEBAR ---
 st.sidebar.title("💠 SENTINEL")
 TICKER = st.sidebar.text_input("SEARCH", st.session_state.get('current_ticker', 'NVDA')).upper()
 st.session_state.current_ticker = TICKER
 
-# 1. YTD is now moved to the end
+# Order: 1D to 5Y, with YTD last
 time_map = {"1D": "1d", "5D": "5d", "1M": "1mo", "1Y": "1y", "5Y": "5y", "YTD": "ytd"}
 selected_label = st.sidebar.selectbox("TIMEFRAME", list(time_map.keys()), index=3)
 
@@ -69,6 +68,7 @@ for fav in st.session_state.favorites:
 
 # --- 6. MAIN CONTENT ---
 try:
+    # Use session to mimic browser for News stability
     ticker_obj = yf.Ticker(TICKER)
     df = yf.download(TICKER, period=time_map[selected_label], 
                      interval="1m" if selected_label=="1D" else "1d", 
@@ -92,54 +92,68 @@ try:
             else: st.session_state.favorites.append(TICKER)
             st.rerun()
 
-        # AI Prediction Calculation
+        # AI Projection Math
         y_vals = df['Close'].values.flatten()
         x_vals = np.arange(len(y_vals))
         slope, intercept = np.polyfit(x_vals, y_vals, 1)
-        pred = slope * (len(y_vals)) + intercept
-        st.markdown(f"### 🔮 AI PROJECTION: <span style='color:#00FF41;'>${pred:.2f}</span>", unsafe_allow_html=True)
+        
+        # Create "Future" index for the prediction line
+        future_steps = int(len(x_vals) * 0.15) # Extend by 15%
+        x_future = np.arange(len(y_vals), len(y_vals) + future_steps)
+        y_future = slope * x_future + intercept
+        
+        # Latest Prediction point
+        final_pred = y_future[-1]
+        st.markdown(f"### 🔮 AI PROJECTION: <span style='color:#00FF41;'>${final_pred:.2f}</span>", unsafe_allow_html=True)
 
-        # 2x2 Metric Grid with Dynamic Colors
+        # 2x2 Metric Grid
         m1, m2 = st.columns(2); m3, m4 = st.columns(2)
         m1.metric("Market Price", f"${curr_p:.2f}")
         
-        # 2. Trend Velocity color logic (Green if +, Red if -)
+        # Velocity Color Logic
         vel_color = "normal" if slope >= 0 else "inverse"
         m2.metric("Trend Velocity", f"{slope:+.4f}", delta=f"{slope:.4f}", delta_color=vel_color)
         
         m3.metric("Market Cap", format_val(info.get('marketCap')))
         m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
 
-        # 3. Graph with AI Prediction Line & Interactive Options
-        trend_line = slope * x_vals + intercept
+        # Graph with Extended Prediction Line
         l_col = "#00FF41" if diff >= 0 else "#FF3131"
         fig = go.Figure()
         
-        # Price Area
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', name="Price", 
+        # Current Price Area
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', name="Actual", 
                                  line=dict(color=l_col, width=3), fillcolor=f"rgba{tuple(list(int(l_col.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + [0.1])}"))
         
-        # AI Trendline
-        fig.add_trace(go.Scatter(x=df.index, y=trend_line, name="AI Trend", 
-                                 line=dict(color="rgba(255,255,255,0.4)", width=2, dash='dash')))
+        # The AI "Future" Line
+        # Calculate future timestamps
+        last_date = df.index[-1]
+        future_dates = [last_date + timedelta(days=i) for i in range(1, future_steps + 1)]
         
-        # Interactive Graph Config
-        fig.update_layout(template="plotly_dark", height=450, dragmode='pan', margin=dict(l=0, r=0, t=10, b=0),
+        fig.add_trace(go.Scatter(x=future_dates, y=y_future, name="AI Prediction", 
+                                 line=dict(color="#00FF41", width=2, dash='dot')))
+        
+        fig.update_layout(template="plotly_dark", height=450, dragmode='pan', margin=dict(l=0, r=0, t=10, b=0), showlegend=False,
                           xaxis=dict(showgrid=False), yaxis=dict(side="right", gridcolor="rgba(255,255,255,0.05)"))
-        
-        st.plotly_chart(fig, use_container_width=True, config={'displaylogo': False, 'modeBarButtonsToAdd':['drawline','drawopenpath','drawcircle','drawrect','eraselayer']})
+        st.plotly_chart(fig, use_container_width=True)
 
-        # Sidebar Extras
+        # Download CSV
         st.sidebar.markdown("---")
         st.sidebar.download_button("📥 DOWNLOAD CSV", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
 
-        # News
+        # News Section (Enhanced Stability)
         st.subheader("📰 Recent Headlines")
-        news = ticker_obj.news
-        if news:
-            for n in news[:4]:
-                with st.expander(n.get('title', 'Market Update')):
-                    if n.get('link'): st.markdown(f"[Read Full Article]({n['link']})")
+        try:
+            news_list = ticker_obj.news
+            if news_list:
+                for n in news_list[:5]:
+                    with st.expander(n.get('title', 'Market Update')):
+                        st.write(f"**Source:** {n.get('publisher', 'Financial News')}")
+                        if n.get('link'): st.markdown(f"[Read Full Article]({n['link']})")
+            else:
+                st.info("No recent news headlines available for this ticker.")
+        except:
+            st.error("News feed currently unavailable due to API limits.")
 
-except Exception:
-    st.error(f"Error fetching {TICKER}. Please try again later.")
+except Exception as e:
+    st.error(f"Error fetching {TICKER}. Yahoo Finance may be experiencing issues.")
