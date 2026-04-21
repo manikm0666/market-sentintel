@@ -6,11 +6,13 @@ from streamlit_autorefresh import st_autorefresh
 import numpy as np
 
 # --- 1. APP CONFIG ---
-# Set to 'expanded' so your favorites and search are always visible
 st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="expanded")
 st_autorefresh(interval=60 * 1000, key="sentinel_refresh")
 
-# --- 2. UI STYLING ---
+# --- 2. FULL LEGAL WARNING ---
+st.warning("⚠️ **FINANCIAL DISCLAIMER**: The data and 'predictions' shown here are for educational purposes only. This AI does not provide financial advice. Trading involves significant risk of loss. Always consult a certified professional before making investment decisions.")
+
+# --- 3. UI STYLING ---
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: #FFFFFF; }
@@ -31,7 +33,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. UTILITIES ---
+# --- 4. UTILITIES ---
 def format_val(num):
     if num is None or isinstance(num, pd.Series): return "N/A"
     try:
@@ -54,7 +56,7 @@ def get_watchlist_info(tickers):
         except: continue
     return results
 
-# --- 4. SIDEBAR (Watchlist Restored) ---
+# --- 5. SIDEBAR ---
 st.sidebar.title("💠 SENTINEL")
 TICKER = st.sidebar.text_input("SEARCH", st.session_state.get('current_ticker', 'NVDA')).upper()
 st.session_state.current_ticker = TICKER
@@ -67,7 +69,6 @@ st.sidebar.subheader("📂 WATCHLIST")
 if 'favorites' not in st.session_state:
     st.session_state.favorites = ["AAPL", "MSFT", "NVDA", "^GSPC"]
 
-# Display favorites with live % change
 for item in get_watchlist_info(st.session_state.favorites):
     col_b, col_t = st.sidebar.columns([3, 2])
     if col_b.button(f" {item['t']}", key=f"fav_{item['t']}", use_container_width=True):
@@ -76,7 +77,7 @@ for item in get_watchlist_info(st.session_state.favorites):
     color = "#00FF41" if item['c'] >= 0 else "#FF3131"
     col_t.markdown(f"<p style='color:{color}; font-weight:bold; margin-top:5px; text-align:right;'>{item['c']:+.2f}%</p>", unsafe_allow_html=True)
 
-# --- 5. MAIN DASHBOARD ---
+# --- 6. MAIN CONTENT ---
 try:
     asset = yf.Ticker(TICKER)
     df = asset.history(period=time_map[selected_label], interval="1m" if selected_label=="1D" else "1d")
@@ -88,32 +89,30 @@ try:
         curr_p = df['Close'].iloc[-1]
         diff = curr_p - df['Close'].iloc[0]
         
-        st.warning("⚠️ **FINANCIAL DISCLAIMER**: Educational use only.")
-        
-        # Title and Favorite Toggle
         c_head, c_star = st.columns([0.9, 0.1])
-        c_head.title(f"{info.get('longName', TICKER)} ({TICKER})")
-        is_fav = TICKER in st.session_state.favorites
-        if c_star.button("★" if is_fav else "☆", use_container_width=True):
-            if is_fav: st.session_state.favorites.remove(TICKER)
+        c_head.title(f"{info.get('longName', TICKER)}")
+        
+        if c_star.button("★" if TICKER in st.session_state.favorites else "☆", use_container_width=True):
+            if TICKER in st.session_state.favorites: st.session_state.favorites.remove(TICKER)
             else: st.session_state.favorites.append(TICKER)
             st.rerun()
 
-        # AI Projection Card
+        # AI Projection with Tooltip
         y_vals = df['Close'].values
         slope, intercept = np.polyfit(np.arange(len(y_vals)), y_vals, 1)
         pred = slope * (len(y_vals)) + intercept
-        st.markdown(f"### 🔮 AI PROJECTION: <span style='color:#00FF41;'>${pred:.2f}</span>", unsafe_allow_html=True)
+        st.markdown(f"### 🔮 AI PROJECTION: <span style='color:#00FF41;'>${pred:.2f}</span>", help="A linear regression estimate based on the current timeframe's trend. Not a guarantee of future price.", unsafe_allow_html=True)
 
-        # 2x2 Metric Grid (Mobile Friendly)
+        # 2x2 Metrics with hover-over help tooltips
         m1, m2 = st.columns(2)
         m3, m4 = st.columns(2)
-        m1.metric("Price", f"${curr_p:.2f}")
-        m2.metric("Velocity", f"{slope:+.3f}")
-        m3.metric("Market Cap", format_val(info.get('marketCap')))
-        m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
+        
+        m1.metric("Price", f"${curr_p:.2f}", help="The most recent trading price for this asset.")
+        m2.metric("Velocity", f"{slope:+.3f}", help="The average price change per time unit. Positive means an upward trend.")
+        m3.metric("Market Cap", format_val(info.get('marketCap')), help="Total market value of a company's outstanding shares.")
+        m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}", help="Price-to-Earnings Ratio. Shows how much investors pay for $1 of earnings.")
 
-        # Graph with Lighter Fill & Pan Mode Default
+        # Graph Settings
         l_col = "#00FF41" if diff >= 0 else "#FF3131"
         f_col = "rgba(0, 255, 65, 0.1)" if diff >= 0 else "rgba(255, 49, 49, 0.1)"
         
@@ -121,7 +120,6 @@ try:
         fig.add_trace(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', 
                                  line=dict(color=l_col, width=3), fillcolor=f_col, name="Price"))
         
-        # Forecast Dot
         pred_idx = df.index[-1] + (df.index[-1] - df.index[-2])
         fig.add_trace(go.Scatter(x=[df.index[-1], pred_idx], y=[curr_p, pred], 
                                  line=dict(color='white', width=2, dash='dot'), name="Forecast"))
@@ -130,22 +128,21 @@ try:
                           xaxis=dict(showgrid=False), yaxis=dict(side="right", gridcolor="rgba(255,255,255,0.05)"))
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # FIXED NEWS SECTION
+        # News
         st.subheader("📰 Recent Headlines")
         news_list = asset.news
         if news_list:
             for n in news_list[:5]:
-                # Updated parsing to catch different yfinance formats
-                title = n.get('title') or n.get('content', {}).get('title') or "Latest Update"
-                url = n.get('link') or n.get('url') or n.get('content', {}).get('clickThroughUrl', {}).get('url')
+                title = n.get('title') or n.get('content', {}).get('title') or "Latest News"
+                url = n.get('link') or n.get('url')
                 with st.expander(title):
                     if url: st.markdown(f"**[Read Full Article]({url})**")
         else:
-            st.write("No current news headlines found.")
+            st.write("No news headlines found.")
 
         # Sidebar Export
         st.sidebar.markdown("---")
         st.sidebar.download_button("📥 DOWNLOAD CSV", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
 
 except Exception:
-    st.info("Input a valid ticker to start monitoring.")
+    st.info("Input a valid ticker to begin monitoring.")
