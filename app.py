@@ -6,7 +6,8 @@ from streamlit_autorefresh import st_autorefresh
 import numpy as np
 
 # --- 1. APP CONFIG ---
-st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="expanded")
+# Setting this to 'auto' ensures it collapses to a thin bar on mobile instead of hiding
+st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="auto")
 st_autorefresh(interval=60 * 1000, key="sentinel_refresh")
 
 # --- 2. FULL LEGAL WARNING ---
@@ -16,19 +17,33 @@ st.warning("⚠️ **FINANCIAL DISCLAIMER**: The data and 'predictions' shown he
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: #FFFFFF; }
+    
+    /* Metric Cards */
     div[data-testid="stMetric"] {
         background-color: rgba(255,255,255,0.03);
         border: 1px solid rgba(128,128,128,0.1);
         padding: 15px;
         border-radius: 12px;
     }
+
+    /* Mobile-specific adjustments */
+    @media (max-width: 640px) {
+        /* Make the columns stack 2x2 */
+        div[data-testid="column"] { width: 100% !important; flex: 1 1 calc(50% - 10px) !important; }
+        
+        /* TARGETING THE STAR BUTTON ON MOBILE */
+        div[data-testid="column"]:nth-child(2) button {
+            font-size: 14px !important;
+            padding: 2px 5px !important;
+            min-height: 30px !important;
+        }
+    }
+
+    /* Input styling */
     div[data-testid="stTextInput"] > div > div > input {
         border: 1px solid #00FF41 !important;
         background-color: #161b22 !important;
         color: #00FF41 !important;
-    }
-    @media (max-width: 640px) {
-        div[data-testid="column"] { width: 100% !important; flex: 1 1 calc(50% - 10px) !important; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -89,11 +104,13 @@ try:
         curr_p = df['Close'].iloc[-1]
         diff = curr_p - df['Close'].iloc[0]
         
+        # Header with Small Mobile Star
         c_head, c_star = st.columns([0.9, 0.1])
         c_head.title(f"{info.get('longName', TICKER)}")
         
-        if c_star.button("★" if TICKER in st.session_state.favorites else "☆", use_container_width=True):
-            if TICKER in st.session_state.favorites: st.session_state.favorites.remove(TICKER)
+        is_fav = TICKER in st.session_state.favorites
+        if c_star.button("★" if is_fav else "☆", use_container_width=True):
+            if is_fav: st.session_state.favorites.remove(TICKER)
             else: st.session_state.favorites.append(TICKER)
             st.rerun()
 
@@ -101,16 +118,16 @@ try:
         y_vals = df['Close'].values
         slope, intercept = np.polyfit(np.arange(len(y_vals)), y_vals, 1)
         pred = slope * (len(y_vals)) + intercept
-        st.markdown(f"### 🔮 AI PROJECTION: <span style='color:#00FF41;'>${pred:.2f}</span>", help="A linear regression estimate based on the current timeframe's trend. Not a guarantee of future price.", unsafe_allow_html=True)
+        st.markdown(f"### 🔮 AI PROJECTION: <span style='color:#00FF41;'>${pred:.2f}</span>", help="Trend-based estimate.", unsafe_allow_html=True)
 
-        # 2x2 Metrics with hover-over help tooltips
+        # 2x2 Metrics
         m1, m2 = st.columns(2)
         m3, m4 = st.columns(2)
         
-        m1.metric("Price", f"${curr_p:.2f}", help="The most recent trading price for this asset.")
-        m2.metric("Velocity", f"{slope:+.3f}", help="The average price change per time unit. Positive means an upward trend.")
-        m3.metric("Market Cap", format_val(info.get('marketCap')), help="Total market value of a company's outstanding shares.")
-        m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}", help="Price-to-Earnings Ratio. Shows how much investors pay for $1 of earnings.")
+        m1.metric("Price", f"${curr_p:.2f}", help="Current price.")
+        m2.metric("Velocity", f"{slope:+.3f}", help="Rate of change.")
+        m3.metric("Market Cap", format_val(info.get('marketCap')), help="Total value.")
+        m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}", help="Price/Earnings.")
 
         # Graph Settings
         l_col = "#00FF41" if diff >= 0 else "#FF3131"
@@ -120,29 +137,23 @@ try:
         fig.add_trace(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', 
                                  line=dict(color=l_col, width=3), fillcolor=f_col, name="Price"))
         
-        pred_idx = df.index[-1] + (df.index[-1] - df.index[-2])
-        fig.add_trace(go.Scatter(x=[df.index[-1], pred_idx], y=[curr_p, pred], 
-                                 line=dict(color='white', width=2, dash='dot'), name="Forecast"))
-
         fig.update_layout(template="plotly_dark", height=400, dragmode='pan', margin=dict(l=0, r=0, t=10, b=0),
                           xaxis=dict(showgrid=False), yaxis=dict(side="right", gridcolor="rgba(255,255,255,0.05)"))
         st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # News
-        st.subheader("📰 Recent Headlines")
+        # News Section
+        st.subheader("📰 Headlines")
         news_list = asset.news
         if news_list:
-            for n in news_list[:5]:
-                title = n.get('title') or n.get('content', {}).get('title') or "Latest News"
+            for n in news_list[:4]:
+                title = n.get('title') or "Latest News"
                 url = n.get('link') or n.get('url')
                 with st.expander(title):
-                    if url: st.markdown(f"**[Read Full Article]({url})**")
-        else:
-            st.write("No news headlines found.")
+                    if url: st.markdown(f"**[Read]({url})**")
 
         # Sidebar Export
         st.sidebar.markdown("---")
         st.sidebar.download_button("📥 DOWNLOAD CSV", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
 
 except Exception:
-    st.info("Input a valid ticker to begin monitoring.")
+    st.info("Input a valid ticker...")
