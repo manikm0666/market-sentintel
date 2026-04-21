@@ -6,33 +6,27 @@ from streamlit_autorefresh import st_autorefresh
 import numpy as np
 
 # --- 1. APP CONFIG ---
-st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="collapsed")
+# Set to 'expanded' so your favorites and search are always visible
+st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="expanded")
 st_autorefresh(interval=60 * 1000, key="sentinel_refresh")
 
-# --- 2. PREMIUM UI STYLING ---
+# --- 2. UI STYLING ---
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: #FFFFFF; }
-    
-    /* Metric Cards */
     div[data-testid="stMetric"] {
         background-color: rgba(255,255,255,0.03);
         border: 1px solid rgba(128,128,128,0.1);
         padding: 15px;
         border-radius: 12px;
     }
-
-    /* Mobile-specific adjustments */
-    @media (max-width: 640px) {
-        div[data-testid="column"] { width: 100% !important; flex: 1 1 calc(50% - 10px) !important; }
-        .stMetric { margin-bottom: 10px; }
-    }
-
-    /* Input styling */
     div[data-testid="stTextInput"] > div > div > input {
         border: 1px solid #00FF41 !important;
         background-color: #161b22 !important;
         color: #00FF41 !important;
+    }
+    @media (max-width: 640px) {
+        div[data-testid="column"] { width: 100% !important; flex: 1 1 calc(50% - 10px) !important; }
     }
     </style>
     """, unsafe_allow_html=True)
@@ -48,7 +42,19 @@ def format_val(num):
         return f"{num:.1f}P"
     except: return "N/A"
 
-# --- 4. SIDEBAR ---
+@st.cache_data(ttl=60)
+def get_watchlist_info(tickers):
+    results = []
+    for t in tickers:
+        try:
+            h = yf.Ticker(t).history(period="2d")
+            if len(h) >= 2:
+                change = ((h['Close'].iloc[-1] - h['Close'].iloc[-2]) / h['Close'].iloc[-2]) * 100
+                results.append({"t": t, "c": change})
+        except: continue
+    return results
+
+# --- 4. SIDEBAR (Watchlist Restored) ---
 st.sidebar.title("💠 SENTINEL")
 TICKER = st.sidebar.text_input("SEARCH", st.session_state.get('current_ticker', 'NVDA')).upper()
 st.session_state.current_ticker = TICKER
@@ -56,7 +62,21 @@ st.session_state.current_ticker = TICKER
 time_map = {"1D": "1d", "5D": "5d", "1M": "1mo", "1Y": "1y", "5Y": "5y", "YTD": "ytd"}
 selected_label = st.sidebar.selectbox("TIMEFRAME", list(time_map.keys()), index=3)
 
-# --- 5. DATA FETCH ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("📂 WATCHLIST")
+if 'favorites' not in st.session_state:
+    st.session_state.favorites = ["AAPL", "MSFT", "NVDA", "^GSPC"]
+
+# Display favorites with live % change
+for item in get_watchlist_info(st.session_state.favorites):
+    col_b, col_t = st.sidebar.columns([3, 2])
+    if col_b.button(f" {item['t']}", key=f"fav_{item['t']}", use_container_width=True):
+        st.session_state.current_ticker = item['t']
+        st.rerun()
+    color = "#00FF41" if item['c'] >= 0 else "#FF3131"
+    col_t.markdown(f"<p style='color:{color}; font-weight:bold; margin-top:5px; text-align:right;'>{item['c']:+.2f}%</p>", unsafe_allow_html=True)
+
+# --- 5. MAIN DASHBOARD ---
 try:
     asset = yf.Ticker(TICKER)
     df = asset.history(period=time_map[selected_label], interval="1m" if selected_label=="1D" else "1d")
@@ -68,25 +88,24 @@ try:
         curr_p = df['Close'].iloc[-1]
         diff = curr_p - df['Close'].iloc[0]
         
-        # Dashboard Header
-        st.warning("⚠️ **FINANCIAL DISCLAIMER**: Educational purposes only.")
+        st.warning("⚠️ **FINANCIAL DISCLAIMER**: Educational use only.")
         
-        col_title, col_star = st.columns([0.85, 0.15])
-        col_title.title(f"{info.get('symbol', TICKER)}")
-        
-        if 'favorites' not in st.session_state: st.session_state.favorites = ["AAPL", "MSFT", "NVDA"]
-        if col_star.button("★" if TICKER in st.session_state.favorites else "☆", use_container_width=True):
-            if TICKER in st.session_state.favorites: st.session_state.favorites.remove(TICKER)
+        # Title and Favorite Toggle
+        c_head, c_star = st.columns([0.9, 0.1])
+        c_head.title(f"{info.get('longName', TICKER)} ({TICKER})")
+        is_fav = TICKER in st.session_state.favorites
+        if c_star.button("★" if is_fav else "☆", use_container_width=True):
+            if is_fav: st.session_state.favorites.remove(TICKER)
             else: st.session_state.favorites.append(TICKER)
             st.rerun()
 
-        # AI Projection Header
+        # AI Projection Card
         y_vals = df['Close'].values
         slope, intercept = np.polyfit(np.arange(len(y_vals)), y_vals, 1)
         pred = slope * (len(y_vals)) + intercept
-        st.markdown(f"<h3 style='color:gray;'>🔮 AI PROJECTION: <span style='color:#00FF41;'>${pred:.2f}</span></h3>", unsafe_allow_html=True)
+        st.markdown(f"### 🔮 AI PROJECTION: <span style='color:#00FF41;'>${pred:.2f}</span>", unsafe_allow_html=True)
 
-        # Responsive Metrics
+        # 2x2 Metric Grid (Mobile Friendly)
         m1, m2 = st.columns(2)
         m3, m4 = st.columns(2)
         m1.metric("Price", f"${curr_p:.2f}")
@@ -94,41 +113,39 @@ try:
         m3.metric("Market Cap", format_val(info.get('marketCap')))
         m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
 
-        # GRAPH: Lighter fill + Default Pan Mode
-        line_color = "#00FF41" if diff >= 0 else "#FF3131"
-        fill_color = "rgba(0, 255, 65, 0.1)" if diff >= 0 else "rgba(255, 49, 49, 0.1)"
+        # Graph with Lighter Fill & Pan Mode Default
+        l_col = "#00FF41" if diff >= 0 else "#FF3131"
+        f_col = "rgba(0, 255, 65, 0.1)" if diff >= 0 else "rgba(255, 49, 49, 0.1)"
         
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', 
-                                 line=dict(color=line_color, width=3), 
-                                 fillcolor=fill_color, name="Price"))
+                                 line=dict(color=l_col, width=3), fillcolor=f_col, name="Price"))
         
-        # Add Prediction Forecast Line
+        # Forecast Dot
         pred_idx = df.index[-1] + (df.index[-1] - df.index[-2])
         fig.add_trace(go.Scatter(x=[df.index[-1], pred_idx], y=[curr_p, pred], 
                                  line=dict(color='white', width=2, dash='dot'), name="Forecast"))
 
-        fig.update_layout(
-            template="plotly_dark", 
-            height=400, 
-            dragmode='pan',  # DEFAULT TO PAN MODE
-            margin=dict(l=0, r=0, t=10, b=0),
-            xaxis=dict(showgrid=False),
-            yaxis=dict(side="right", gridcolor="rgba(255,255,255,0.05)")
-        )
-        st.plotly_chart(fig, use_container_width=True, config={'scrollZoom': True, 'displayModeBar': False})
+        fig.update_layout(template="plotly_dark", height=400, dragmode='pan', margin=dict(l=0, r=0, t=10, b=0),
+                          xaxis=dict(showgrid=False), yaxis=dict(side="right", gridcolor="rgba(255,255,255,0.05)"))
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
-        # News Section
+        # FIXED NEWS SECTION
         st.subheader("📰 Recent Headlines")
-        for n in asset.news[:4]:
-            title = n.get('title') or "Market News"
-            url = n.get('link') or n.get('url')
-            with st.expander(title):
-                if url: st.markdown(f"[Read Full Story]({url})")
+        news_list = asset.news
+        if news_list:
+            for n in news_list[:5]:
+                # Updated parsing to catch different yfinance formats
+                title = n.get('title') or n.get('content', {}).get('title') or "Latest Update"
+                url = n.get('link') or n.get('url') or n.get('content', {}).get('clickThroughUrl', {}).get('url')
+                with st.expander(title):
+                    if url: st.markdown(f"**[Read Full Article]({url})**")
+        else:
+            st.write("No current news headlines found.")
 
-        # Fixed Sidebar Export
+        # Sidebar Export
         st.sidebar.markdown("---")
-        st.sidebar.download_button("📥 DOWNLOAD DATA", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
+        st.sidebar.download_button("📥 DOWNLOAD CSV", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
 
 except Exception:
-    st.info("Sentinel Active. Awaiting ticker input...")
+    st.info("Input a valid ticker to start monitoring.")
