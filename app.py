@@ -6,22 +6,12 @@ from streamlit_autorefresh import st_autorefresh
 import numpy as np
 from datetime import timedelta
 import requests
+import random
 import time
 
-# --- 1. GLOBAL APP CONFIG ---
-st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="expanded")
-st_autorefresh(interval=60 * 1000, key="sentinel_refresh")
-
-# --- 2. BROWSER SESSION (Method 1 Limiter Bypass) ---
-if 'session' not in st.session_state:
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
-    })
-    st.session_state.session = session
-
-# --- 3. UTILITIES ---
+# --- 1. GLOBAL UTILITIES (Defined first to prevent Pylance errors) ---
 def format_val(num):
+    """Formats large metrics into readable strings."""
     if num is None or num == "N/A": return "N/A"
     try:
         num = float(num)
@@ -31,12 +21,35 @@ def format_val(num):
         return f"{num:.1f}P"
     except: return "N/A"
 
+# --- 2. ADVANCED IDENTITY ROTATION (The "Complicated" Fix) ---
+def get_rotated_session():
+    """Mimics different browsers to bypass Yahoo's bot detection."""
+    agents = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0'
+    ]
+    sess = requests.Session()
+    sess.headers.update({'User-Agent': random.choice(agents)})
+    # Pre-flight to get cookies
+    try: sess.get("https://finance.yahoo.com", timeout=5)
+    except: pass
+    return sess
+
+# --- 3. APP CONFIG ---
+st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="expanded")
+st_autorefresh(interval=60 * 1000, key="sentinel_refresh")
+
+if 'session' not in st.session_state:
+    st.session_state.session = get_rotated_session()
+
 @st.cache_data(ttl=300)
-def get_data(ticker, period, interval):
+def fetch_data(ticker, period, interval):
     return yf.download(ticker, period=period, interval=interval, 
                        progress=False, session=st.session_state.session)
 
-# --- 4. CUSTOM UI STYLING ---
+# --- 4. UI STYLING ---
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: #FFFFFF; }
@@ -46,11 +59,6 @@ st.markdown("""
         padding: 15px; border-radius: 12px;
     }
     .proj-text { font-size: 24px; font-weight: bold; text-shadow: 0 0 10px rgba(0,255,65,0.4); }
-    div[data-testid="stTextInput"] > div > div > input {
-        border: 1px solid #00FF41 !important;
-        background-color: #161b22 !important;
-        color: #00FF41 !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -59,14 +67,11 @@ st.sidebar.title("💠 SENTINEL")
 TICKER = st.sidebar.text_input("SEARCH", st.session_state.get('current_ticker', 'NVDA')).upper()
 st.session_state.current_ticker = TICKER
 
-# Timeframe order verified (YTD last)
 time_map = {"1D": "1d", "5D": "5d", "1M": "1mo", "1Y": "1y", "5Y": "5y", "YTD": "ytd"}
 selected_label = st.sidebar.selectbox("TIMEFRAME", list(time_map.keys()), index=3)
 
 st.sidebar.markdown("---")
-col_w, col_del = st.sidebar.columns([0.8, 0.2])
-col_w.subheader("📂 WATCHLIST")
-if col_del.button("🗑️"):
+if st.sidebar.button("🗑️ Clear Watchlist"):
     st.session_state.favorites = ["AAPL", "MSFT", "NVDA", "^GSPC"]
     st.rerun()
 
@@ -79,25 +84,23 @@ for fav in st.session_state.favorites:
         st.rerun()
 
 # --- 6. MAIN ENGINE ---
-st.warning("⚠️ **FINANCIAL DISCLAIMER**: The data and 'predictions' shown here are for educational purposes only. This AI does not provide financial advice.")
+st.warning("⚠️ **FINANCIAL DISCLAIMER**: Educational purposes only.")
 
 try:
     ticker_obj = yf.Ticker(TICKER, session=st.session_state.session)
     interval = "1m" if selected_label == "1D" else "1d"
-    df = get_data(TICKER, time_map[selected_label], interval)
+    df = fetch_data(TICKER, time_map[selected_label], interval)
     
     if not df.empty:
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
             
-        # Download Button: Conditional (Only shows on success)
+        # Download Button (Conditional)
         st.sidebar.markdown("---")
         st.sidebar.download_button("📥 DOWNLOAD CSV", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
         
         info = ticker_obj.info
         curr_p = float(df['Close'].iloc[-1])
-        first_p = float(df['Close'].iloc[0])
         
-        # Header
         c_title, c_star = st.columns([0.9, 0.1])
         c_title.title(f"{info.get('longName', TICKER)} ({TICKER})")
         
@@ -107,7 +110,7 @@ try:
             else: st.session_state.favorites.append(TICKER)
             st.rerun()
 
-        # AI Projection extension
+        # Projection logic
         y = df['Close'].values.flatten()
         x = np.arange(len(y))
         slope, intercept = np.polyfit(x, y, 1)
@@ -116,17 +119,15 @@ try:
         
         st.markdown(f"<div class='proj-text'>🔮 AI PROJECTION: <span style='color:#00FF41;'>${y_proj[-1]:.2f}</span></div>", unsafe_allow_html=True)
 
-        # Dashboard Grid
         m1, m2 = st.columns(2); m3, m4 = st.columns(2)
         m1.metric("Current Price", f"${curr_p:.2f}")
         m2.metric("Trend Velocity", f"{slope:+.4f}", delta=f"{slope:.4f}", delta_color="normal" if slope >= 0 else "inverse")
         m3.metric("Market Cap", format_val(info.get('marketCap')))
         m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
 
-        # Plotly Chart with AI Path
+        # Plotly Chart
         fig = go.Figure()
-        l_col = "#00FF41" if curr_p >= first_p else "#FF3131"
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Actual", line=dict(color=l_col, width=3), fill='tozeroy', fillcolor=f"rgba(0, 255, 65, 0.05)"))
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Actual", line=dict(color="#00FF41" if curr_p >= float(df['Close'].iloc[0]) else "#FF3131", width=3)))
         
         f_dates = [df.index[-1] + timedelta(days=i) for i in range(1, f_steps + 1)]
         fig.add_trace(go.Scatter(x=f_dates, y=y_proj, name="Path", line=dict(color="#00FF41", width=2, dash='dot')))
@@ -134,19 +135,11 @@ try:
         fig.update_layout(template="plotly_dark", height=450, margin=dict(l=0, r=0, t=10, b=0), showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
-        # News Section
-        st.subheader("📰 Recent Headlines")
-        try:
-            news = ticker_obj.news
-            if news:
-                for n in news[:5]:
-                    with st.expander(n['title']): st.markdown(f"[Source]({n['link']})")
-        except: st.info("News feed is temporarily restricted.")
-
 except Exception:
-    # --- COUNTDOWN LOGIC ---
+    # Countdown Error UI
     placeholder = st.empty()
     for seconds in range(60, 0, -1):
-        placeholder.error(f"⚠️ Yahoo Limiter active for {TICKER}. Retrying in {seconds} seconds...")
+        placeholder.error(f"⚠️ Yahoo Limiter active for {TICKER}. Rotating identity and retrying in {seconds}s...")
         time.sleep(1)
+    st.session_state.session = get_rotated_session() # Force a new identity
     st.rerun()
