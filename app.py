@@ -79,7 +79,7 @@ for fav in st.session_state.favorites:
         st.rerun()
 
 # --- 6. MAIN ENGINE ---
-st.warning("⚠️ **FINANCIAL DISCLAIMER**: Educational purposes only.")
+st.warning("⚠️ **FINANCIAL DISCLAIMER**: The data and 'predictions' shown here are for educational purposes only. This AI does not provide financial advice.")
 
 try:
     ticker_obj = yf.Ticker(TICKER, session=st.session_state.session)
