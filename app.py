@@ -7,22 +7,22 @@ import numpy as np
 from datetime import timedelta
 import requests
 
-# --- 1. APP CONFIG ---
+# --- 1. GLOBAL SETTINGS ---
 st.set_page_config(page_title="Market Sentinel", layout="wide", initial_sidebar_state="expanded")
 st_autorefresh(interval=60 * 1000, key="sentinel_refresh")
 
-# --- 2. BROWSER EMULATION (Limiter Bypass) ---
+# --- 2. BROWSER SESSION MANAGEMENT ---
+# Using a single persistent session is more efficient than recreating it
 if 'session' not in st.session_state:
     session = requests.Session()
     session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
     })
     st.session_state.session = session
 
-# --- 3. UTILITIES (Must be defined before use) ---
+# --- 3. OPTIMIZED UTILITIES ---
 def format_val(num):
-    """Formats large numbers into K, M, B, T suffixes."""
-    if num is None: return "N/A"
+    if num in [None, "N/A"]: return "N/A"
     try:
         num = float(num)
         for unit in ['', 'K', 'M', 'B', 'T']:
@@ -31,13 +31,13 @@ def format_val(num):
         return f"{num:.1f}P"
     except: return "N/A"
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=600, show_spinner="Fetching Market Data...")
 def fetch_stock_data(ticker, period, interval):
-    """Cached fetcher to reduce Yahoo Finance request volume."""
+    """High-efficiency fetcher with 10-minute caching."""
     return yf.download(ticker, period=period, interval=interval, 
                        progress=False, session=st.session_state.session)
 
-# --- 4. UI STYLING ---
+# --- 4. THEMED UI ---
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: #FFFFFF; }
@@ -46,7 +46,7 @@ st.markdown("""
         border: 1px solid rgba(128,128,128,0.1);
         padding: 15px; border-radius: 12px;
     }
-    .proj-text { font-size: 24px; font-weight: bold; text-shadow: 0 0 10px rgba(0,255,65,0.3); }
+    .proj-text { font-size: 24px; font-weight: bold; text-shadow: 0 0 10px rgba(0,255,65,0.4); }
     div[data-testid="stTextInput"] > div > div > input {
         border: 1px solid #00FF41 !important;
         background-color: #161b22 !important;
@@ -55,12 +55,11 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 5. SIDEBAR ---
+# --- 5. SIDEBAR CONTROLS ---
 st.sidebar.title("💠 SENTINEL")
 TICKER = st.sidebar.text_input("SEARCH", st.session_state.get('current_ticker', 'NVDA')).upper()
 st.session_state.current_ticker = TICKER
 
-# Order Verified: YTD at the end
 time_map = {"1D": "1d", "5D": "5d", "1M": "1mo", "1Y": "1y", "5Y": "5y", "YTD": "ytd"}
 selected_label = st.sidebar.selectbox("TIMEFRAME", list(time_map.keys()), index=3)
 
@@ -68,7 +67,7 @@ st.sidebar.markdown("---")
 col_w, col_del = st.sidebar.columns([0.8, 0.2])
 col_w.subheader("📂 WATCHLIST")
 if col_del.button("🗑️"):
-    st.session_state.favorites = []
+    st.session_state.favorites = ["AAPL", "MSFT", "NVDA", "^GSPC"]
     st.rerun()
 
 if 'favorites' not in st.session_state:
@@ -79,8 +78,8 @@ for fav in st.session_state.favorites:
         st.session_state.current_ticker = fav
         st.rerun()
 
-# --- 6. MAIN CONTENT ---
-st.warning("⚠️ **FINANCIAL DISCLAIMER**: Data and 'predictions' are for educational purposes only.")
+# --- 6. CORE ENGINE ---
+st.warning("⚠️ **FINANCIAL DISCLAIMER**: Educational purposes only.")
 
 try:
     ticker_obj = yf.Ticker(TICKER, session=st.session_state.session)
@@ -88,10 +87,9 @@ try:
     df = fetch_stock_data(TICKER, time_map[selected_label], interval)
     
     if not df.empty:
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         
-        # Download: Conditional (Only shows on success)
+        # Download: Conditional to Sidebar
         st.sidebar.markdown("---")
         st.sidebar.download_button("📥 DOWNLOAD CSV", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
         
@@ -99,9 +97,9 @@ try:
         curr_p = float(df['Close'].iloc[-1])
         diff = curr_p - float(df['Close'].iloc[0])
         
-        # Header + Star
-        c_title, c_star = st.columns([0.9, 0.1])
-        c_title.title(f"{info.get('longName', TICKER)} ({TICKER})")
+        # Header
+        c_head, c_star = st.columns([0.9, 0.1])
+        c_head.title(f"{info.get('longName', TICKER)} ({TICKER})")
         
         is_fav = TICKER in st.session_state.favorites
         if c_star.button("★" if is_fav else "☆", use_container_width=True):
@@ -109,47 +107,41 @@ try:
             else: st.session_state.favorites.append(TICKER)
             st.rerun()
 
-        # AI Projection with Future extension
-        y_vals = df['Close'].values.flatten()
-        x_vals = np.arange(len(y_vals))
-        slope, intercept = np.polyfit(x_vals, y_vals, 1)
-        future_steps = int(len(x_vals) * 0.15) 
-        x_future = np.arange(len(x_vals), len(x_vals) + future_steps)
-        y_future = slope * x_future + intercept
+        # Efficient Linear Projection
+        y = df['Close'].values.flatten()
+        x = np.arange(len(y))
+        slope, intercept = np.polyfit(x, y, 1)
+        f_steps = int(len(x) * 0.15)
+        y_proj = slope * (np.arange(len(x), len(x) + f_steps)) + intercept
         
-        st.markdown(f"<div class='proj-text'>🔮 AI PROJECTION: <span style='color:#00FF41;'>${y_future[-1]:.2f}</span></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='proj-text'>🔮 AI PROJECTION: <span style='color:#00FF41;'>${y_proj[-1]:.2f}</span></div>", unsafe_allow_html=True)
 
-        # Metrics Grid
+        # Dashboard Grid
         m1, m2 = st.columns(2); m3, m4 = st.columns(2)
-        m1.metric("Market Price", f"${curr_p:.2f}")
-        vel_color = "normal" if slope >= 0 else "inverse"
-        m2.metric("Trend Velocity", f"{slope:+.4f}", delta=f"{slope:.4f}", delta_color=vel_color)
-        m3.metric("Market Cap", format_val(info.get('marketCap'))) # Verified fix
+        m1.metric("Current Price", f"${curr_p:.2f}")
+        m2.metric("Trend Velocity", f"{slope:+.4f}", delta=f"{slope:.4f}", delta_color="normal" if slope >= 0 else "inverse")
+        m3.metric("Market Cap", format_val(info.get('marketCap'))) 
         m4.metric("P/E Ratio", f"{info.get('trailingPE', 'N/A')}")
 
-        # Graph with Prediction Path
-        l_col = "#00FF41" if diff >= 0 else "#FF3131"
+        # Plotly Graph
         fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], fill='tozeroy', name="Price", 
-                                 line=dict(color=l_col, width=3), fillcolor=f"rgba(0, 255, 65, 0.1)"))
+        fig.add_trace(go.Scatter(x=df.index, y=df['Close'], name="Price", line=dict(color="#00FF41" if diff >= 0 else "#FF3131", width=3), fill='tozeroy', fillcolor="rgba(0, 255, 65, 0.05)"))
         
-        last_date = df.index[-1]
-        future_dates = [last_date + timedelta(days=i) for i in range(1, future_steps + 1)]
-        fig.add_trace(go.Scatter(x=future_dates, y=y_future, name="AI Path", 
-                                 line=dict(color="#00FF41", width=2, dash='dot')))
+        f_dates = [df.index[-1] + timedelta(days=i) for i in range(1, f_steps + 1)]
+        fig.add_trace(go.Scatter(x=f_dates, y=y_proj, name="Path", line=dict(color="#00FF41", width=2, dash='dot')))
         
         fig.update_layout(template="plotly_dark", height=450, margin=dict(l=0, r=0, t=10, b=0), showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
-        # News Section (Stability fix)
-        st.subheader("📰 Recent Headlines")
+        # Graceful News Handling
         try:
             news = ticker_obj.news
             if news:
+                st.subheader("📰 Headlines")
                 for n in news[:5]:
-                    with st.expander(n.get('title', 'Market Update')):
-                        st.markdown(f"[Read Full Article]({n['link']})")
-        except: st.info("News unavailable. Limited by Yahoo Finance.")
+                    with st.expander(n['title']): st.markdown(f"[Source]({n['link']})")
+        except: st.info("News feed currently on cooldown.")
 
 except Exception:
-    st.error(f"Error fetching {TICKER}. Please check the ticker symbol or wait a moment.")
+    # Improved Error Resilience
+    st.error(f"⚠️ Fetching failed for {TICKER}. This is usually a temporary Yahoo Finance limit. Retrying in 60s...")
