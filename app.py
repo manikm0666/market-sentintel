@@ -8,8 +8,8 @@ from twelvedata import TDClient
 from datetime import datetime
 
 # --- CONFIGURATION ---
-TD_KEY = "YOUR_TWELVE_DATA_KEY"
-NEWS_KEY = "YOUR_MARKETAUX_KEY"
+TD_KEY = "79c371cc5cf04adb94d7038c449d2c01"
+NEWS_KEY = "LStl2d8iIgGGdU1FRuGPsIbyJWPRgke6EyLVYPFF"
 
 st.set_page_config(page_title="Sentinel Pro", layout="wide")
 
