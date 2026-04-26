@@ -3,120 +3,93 @@ import pandas as pd
 import plotly.graph_objects as go
 from streamlit_autorefresh import st_autorefresh
 import numpy as np
-from datetime import datetime, timedelta
+import requests
 from twelvedata import TDClient
 
-# --- 1. CONFIGURATION & STYLING ---
-API_KEY = "YOUR_FREE_API_KEY" 
+# --- CONFIGURATION ---
+TD_KEY = "79c371cc5cf04adb94d7038c449d2c01"
+NEWS_KEY = "LStl2d8iIgGGdU1FRuGPsIbyJWPRgke6EyLVYPFF"
 
-st.set_page_config(page_title="Market Sentinel Pro", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Sentinel Pro", layout="wide")
 
-# Restoring your original "Dark Terminal" CSS 
+# RESTORED: Your Original Terminal Aesthetic
 st.markdown("""
     <style>
     .stApp { background-color: #0E1117; color: #FFFFFF; }
-    div[data-testid="stMetric"] {
-        background-color: rgba(255,255,255,0.03);
-        border: 1px solid rgba(128,128,128,0.1);
-        padding: 15px; border-radius: 12px;
-    }
-    .proj-text { font-size: 24px; font-weight: bold; text-shadow: 0 0 10px rgba(0,255,65,0.4); }
+    div[data-testid="stMetric"] { background: rgba(255,255,255,0.03); border-radius: 12px; padding: 15px; border: 1px solid #30363D; }
+    .proj-glow { font-size: 26px; font-weight: bold; text-shadow: 0 0 10px #00FF41; color: #00FF41; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. GLOBAL UTILITIES (Restored from old code)  ---
-def format_val(num):
-    if num is None or num == "N/A": return "N/A"
-    try:
-        num = float(num)
-        for unit in ['', 'K', 'M', 'B', 'T']:
-            if abs(num) < 1000.0: return f"{num:3.1f}{unit}"
-            num /= 1000.0
-        return f"{num:.1f}P"
-    except: return "N/A"
-
+# --- ENGINES ---
 @st.cache_data(ttl=60)
-def fetch_market_data(ticker, interval):
+def fetch_all_market(ticker, interval):
     try:
-        td = TDClient(apikey=API_KEY)
-        ts = td.time_series(symbol=ticker, interval=interval, outputsize=100, order="ASC").as_pandas()
+        td = TDClient(apikey=TD_KEY)
+        df = td.time_series(symbol=ticker, interval=interval, outputsize=100, order="ASC").as_pandas()
         quote = td.quote(symbol=ticker).as_json()
-        return ts, quote
-    except Exception as e:
-        return None, None
+        return df, quote
+    except: return None, None
 
-# --- 3. SIDEBAR & WATCHLIST (Restored functionality)  ---
+@st.cache_data(ttl=600)
+def fetch_news(ticker):
+    url = f"https://api.marketaux.com/v1/news/all?symbols={ticker}&filter_entities=true&limit=3&api_token={NEWS_KEY}"
+    try: return requests.get(url).json().get('data', [])
+    except: return []
+
+# --- SIDEBAR & WATCHLIST ---
+st_autorefresh(interval=60 * 1000, key="refresh")
+if 'favs' not in st.session_state: st.session_state.favs = ["NVDA", "TSLA", "BTC/USD"]
+
 st.sidebar.title("💠 SENTINEL PRO")
-st_autorefresh(interval=60 * 1000, key="sentinel_refresh")
+TICKER = st.sidebar.text_input("SEARCH", value=st.session_state.get('curr', 'AAPL')).upper()
+st.session_state.curr = TICKER
 
-# Persistent Ticker State
-TICKER = st.sidebar.text_input("SEARCH", st.session_state.get('current_ticker', 'NVDA')).upper()
-st.session_state.current_ticker = TICKER
+t_map = {"1D": "1min", "1M": "1h", "1Y": "1day"}
+sel_t = st.sidebar.selectbox("TIMEFRAME", list(t_map.keys()))
 
-time_map = {"1D": "1min", "5D": "5min", "1M": "1h", "1Y": "1day"}
-selected_label = st.sidebar.selectbox("TIMEFRAME", list(time_map.keys()), index=0)
-
-st.sidebar.markdown("---")
-if 'favorites' not in st.session_state:
-    st.session_state.favorites = ["AAPL", "MSFT", "NVDA", "^GSPC"]
-
-if st.sidebar.button("🗑️ Clear Watchlist"):
-    st.session_state.favorites = ["AAPL", "MSFT", "NVDA", "^GSPC"]
-    st.rerun()
-
-for fav in st.session_state.favorites:
-    if st.sidebar.button(f"★ {fav}", key=f"side_{fav}", use_container_width=True):
-        st.session_state.current_ticker = fav
+# FEATURE: Sidebar Watchlist
+for f in st.session_state.favs:
+    if st.sidebar.button(f"★ {f}", use_container_width=True):
+        st.session_state.curr = f
         st.rerun()
 
-# --- 4. MAIN ENGINE ---
-st.warning("⚠️ **FINANCIAL DISCLAIMER**: Educational purposes only.")
-
-df, info = fetch_market_data(TICKER, time_map[selected_label])
+# --- MAIN DASHBOARD ---
+df, info = fetch_all_market(TICKER, t_map[sel_t])
 
 if df is not None and not df.empty:
-    # 1. Restore Download Button 
-    st.sidebar.markdown("---")
-    st.sidebar.download_button("📥 DOWNLOAD CSV", df.to_csv().encode('utf-8'), f"{TICKER}.csv", use_container_width=True)
+    # FEATURE: Download CSV
+    st.sidebar.download_button("📥 DOWNLOAD DATA", df.to_csv(), f"{TICKER}.csv")
 
-    # 2. Header & Star Toggle 
-    c_title, c_star = st.columns([0.85, 0.15])
-    c_title.title(f"{info.get('name', TICKER)} ({TICKER})")
-    
-    is_fav = TICKER in st.session_state.favorites
-    if c_star.button("★" if is_fav else "☆", use_container_width=True, key="star_main"):
-        if is_fav: st.session_state.favorites.remove(TICKER)
-        else: st.session_state.favorites.append(TICKER)
-        st.rerun()
+    # FEATURE: News Feed (MarketAux)
+    st.sidebar.markdown("### 📰 NEWS")
+    for n in fetch_news(TICKER):
+        st.sidebar.markdown(f"<a href='{n['url']}' style='color:#00FF41;font-size:12px;'>{n['title'][:45]}...</a>", unsafe_allow_html=True)
 
-    # 3. Projection & Metrics 
+    # FEATURE: AI Projection (Degree 2 Polynomial)
     y = df['close'].values.astype(float)
     x = np.arange(len(y))
-    slope, intercept = np.polyfit(x, y, 1)
-    f_steps = int(len(x) * 0.15)
-    y_proj = slope * (np.arange(len(x), len(x) + f_steps)) + intercept
+    poly = np.poly1d(np.polyfit(x, y, 2)) # Upgraded to curved prediction
+    f_steps = 15
+    y_proj = poly(np.arange(len(x), len(x) + f_steps))
     
-    st.markdown(f"<div class='proj-text'>🔮 AI PROJECTION: <span style='color:#00FF41;'>${y_proj[-1]:.2f}</span></div>", unsafe_allow_html=True)
+    st.title(f"{info.get('name', TICKER)}")
+    st.markdown(f"Target: <span class='proj-glow'>${y_proj[-1]:.2f}</span>", unsafe_allow_html=True)
 
-    m1, m2 = st.columns(2); m3, m4 = st.columns(2)
-    m1.metric("Current Price", f"${y[-1]:.2f}")
-    m2.metric("Trend Velocity", f"{slope:+.4f}", delta=f"{slope:.4f}")
-    m3.metric("Market Cap", format_val(info.get('market_cap')))
-    m4.metric("52W High", f"${info.get('fifty_two_week_high', 'N/A')}")
+    # FEATURE: Metric Grid
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Price", f"${y[-1]:.2f}")
+    m2.metric("52W High", f"${info.get('fifty_two_week_high', 'N/A')}")
+    m3.metric("Trend", "BULLISH" if y_proj[-1] > y[-1] else "BEARISH")
 
-    # 4. Chart Aesthetic 
+    # FEATURE: Dynamic Chart
     fig = go.Figure()
-    # Actual Data
-    fig.add_trace(go.Scatter(x=df.index, y=df['close'], name="Actual", 
-                             line=dict(color="#00FF41" if y[-1] >= y[0] else "#FF3131", width=3)))
+    fig.add_trace(go.Scatter(x=df.index, y=df['close'], name="Actual", line=dict(color="#00FF41", width=3)))
     
-    # Projection Path
-    last_date = df.index[-1]
-    f_dates = [last_date + (df.index[-1] - df.index[-2]) * i for i in range(1, f_steps + 1)]
-    fig.add_trace(go.Scatter(x=f_dates, y=y_proj, name="Path", line=dict(color="#00FF41", width=2, dash='dot')))
+    f_dates = [df.index[-1] + (df.index[-1] - df.index[-2]) * i for i in range(1, f_steps + 1)]
+    fig.add_trace(go.Scatter(x=f_dates, y=y_proj, name="AI Path", line=dict(color="#00FF41", width=2, dash='dot')))
     
-    fig.update_layout(template="plotly_dark", height=450, margin=dict(l=0, r=0, t=10, b=0), showlegend=False)
+    fig.update_layout(template="plotly_dark", margin=dict(l=0, r=0, t=10, b=0), height=400)
     st.plotly_chart(fig, use_container_width=True)
-
 else:
-    st.error(f"📡 API Limit or Invalid Symbol. (Twelve Data daily limit: 800)")
+    st.error("Connection Error. Check API keys.")
